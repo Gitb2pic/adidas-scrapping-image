@@ -71,6 +71,9 @@ DEFAULT_URLS = [
     "https://www.adidas.com/us/search?q={sku}",
     "https://www.adidas.com/om/en/search?q={sku}",
     "https://www.adidas.com/om/en/search?q={sku}",
+    "https://www.prodirectsport.com/search/?qq={sku}",
+    "https://www.intersport.fr/search/?text={sku}",
+    "https://parnass.gr/el/anazhthsh?controller=search&s={sku}",
 ]
 
 DOWNLOAD_HEADERS = {
