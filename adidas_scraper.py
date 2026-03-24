@@ -63,6 +63,11 @@ except ImportError:
 ADIDAS_CDN = "assets.adidas.com/images/"
 
 DEFAULT_URLS = [
+    "https://www.adidas.com.au/search?q={sku}",
+    "https://www.adidas.co.in/search?q={sku}",
+    "https://runners.ae/#8495/fullscreen/m=and&q={sku}",
+    "https://www.spartoo.com/ajax/search_word.php?debut={sku}",
+    "https://www.adidas.co.th/en/search?q={sku}",
     "https://www.adidas.co.uk/search?q={sku}",
     "https://www.adidas.com/us/search?q={sku}",
     "https://www.adidas.fr/search?q={sku}",
@@ -478,7 +483,7 @@ def export_odoo_excel(df, sku_files, output_path):
         out[ODOO_IMG_COLUMN] = ""
 
     out[ODOO_IMG_COLUMN] = out[ODOO_SKU_COLUMN].apply(
-        lambda sku: sku_files.get(str(sku).strip(), [""])[0]
+        lambda sku: (sku_files.get(str(sku).strip()) or [""])[0]
     )
 
     wb = openpyxl.Workbook()
