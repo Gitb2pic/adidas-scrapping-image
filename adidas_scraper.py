@@ -13,7 +13,6 @@
 ║    python adidas_scraper.py --sku HT3463 --urls             ║
 ║        https://www.adidas.co.uk/{sku}.html                  ║
 ║        https://www.adidas.com/us/{sku}.html                 ║
-║        https://www.adidas.fr/{sku}.html                     ║
 ║                                                              ║
 ║  Options : --output ./images  --headless  --dry-run         ║
 ╚══════════════════════════════════════════════════════════════╝
@@ -22,7 +21,6 @@ Requirements:
     pip install selenium webdriver-manager openpyxl pandas
 """
 
-import os
 import re
 import sys
 import json
@@ -30,7 +28,6 @@ import time
 import argparse
 import threading
 import urllib.request
-import urllib.error
 from pathlib import Path
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
@@ -62,18 +59,19 @@ except ImportError:
 # CONFIG
 # ================================================================
 
+# CDN officiel Adidas — seules ces URLs sont acceptees
+ADIDAS_CDN = "assets.adidas.com/images/"
+
 DEFAULT_URLS = [
     "https://www.adidas.co.uk/search?q={sku}",
     "https://www.adidas.com/us/search?q={sku}",
     "https://www.adidas.fr/search?q={sku}",
     "https://www.adidas.de/search?q={sku}",
-    "https://www.adidas.co.uk/search?q={sku}",
-    "https://www.adidas.com/us/search?q={sku}",
-    "https://www.adidas.com/om/en/search?q={sku}",
     "https://www.adidas.com/om/en/search?q={sku}",
     "https://www.prodirectsport.com/search/?qq={sku}",
     "https://www.intersport.fr/search/?text={sku}",
     "https://parnass.gr/el/anazhthsh?controller=search&s={sku}",
+    "https://actionwear.dz/index.php?page=products&pages=0&keyword={sku}",
 ]
 
 DOWNLOAD_HEADERS = {
@@ -106,6 +104,47 @@ def log(msg, level="INFO", sku=""):
 def banner(text):
     bar = "=" * 60
     print(f"\n{bar}\n  {text}\n{bar}\n")
+
+
+# ================================================================
+# VALIDATION IMAGE
+# ================================================================
+
+def is_valid_adidas_image(url: str, sku: str) -> bool:
+    """
+    Valide qu'une URL est bien une image produit Adidas officielle.
+
+    Regles :
+    1. Doit venir du CDN officiel  assets.adidas.com/images/
+    2. Doit contenir le SKU (insensible a la casse)
+    3. Extension image valide
+    4. Pas une icone / logo / banniere (trop petite ou chemin generique)
+    """
+    url_lower = url.lower()
+
+    # Regle 1 : CDN officiel uniquement
+    if ADIDAS_CDN not in url_lower:
+        return False
+
+    # Regle 2 : SKU present dans l'URL
+    if sku.lower() not in url_lower:
+        return False
+
+    # Regle 3 : extension image valide
+    clean = url.split("?")[0]
+    if not re.search(r'\.(jpg|jpeg|png|webp)$', clean, re.I):
+        return False
+
+    # Regle 4 : exclure les icones/logos (chemins suspects)
+    excluded_patterns = [
+        "/logo", "/icon", "/badge", "/banner",
+        "/flag", "/avatar", "/favicon", "/sprite",
+        "placeholder", "fallback", "default",
+    ]
+    if any(p in url_lower for p in excluded_patterns):
+        return False
+
+    return True
 
 
 # ================================================================
@@ -152,18 +191,25 @@ def accept_cookies(driver):
 
 
 # ================================================================
-# EXTRACTION D'IMAGES
+# EXTRACTION D'IMAGES  (avec validation stricte)
 # ================================================================
 
 def extract_images(driver, sku):
+    """
+    Extrait les images de la page et ne garde QUE celles qui
+    passent is_valid_adidas_image() — CDN officiel + SKU present.
+    """
     images = []
     seen   = set()
 
     def add(url, label):
         clean = url.split("?")[0]
-        if clean and clean not in seen and "adidas" in clean:
-            seen.add(clean)
+        if clean in seen:
+            return
+        seen.add(clean)
+        if is_valid_adidas_image(clean, sku):
             images.append({"url": clean, "label": label})
+        # sinon on ignore silencieusement
 
     # 1. __NEXT_DATA__
     try:
@@ -171,6 +217,7 @@ def extract_images(driver, sku):
         data = json.loads(el.get_attribute("textContent"))
         _walk_json(data, add)
         if images:
+            log(f"{len(images)} image(s) valide(s) dans __NEXT_DATA__", "OK", sku=sku)
             return images
     except Exception:
         pass
@@ -182,11 +229,12 @@ def extract_images(driver, sku):
             if raw:
                 _walk_json(json.loads(raw), add)
                 if images:
+                    log(f"{len(images)} image(s) valide(s) dans window.{var}", "OK", sku=sku)
                     return images
         except Exception:
             pass
 
-    # 3. Balises img + scroll lazy-load
+    # 3. Balises <img> + scroll lazy-load
     try:
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
         time.sleep(1.5)
@@ -198,7 +246,7 @@ def extract_images(driver, sku):
             "img[class*='product-image']",
             "div[class*='gallery'] img",
             "div[class*='carousel'] img",
-            "img[src*='adidas']",
+            "img[src*='assets.adidas.com']",
         ]:
             for el in driver.find_elements(By.CSS_SELECTOR, sel):
                 for attr in ("src", "data-src", "data-original"):
@@ -206,16 +254,23 @@ def extract_images(driver, sku):
                     if val.startswith("http"):
                         add(val, "img_tag")
         if images:
+            log(f"{len(images)} image(s) valide(s) dans balises <img>", "OK", sku=sku)
             return images
     except Exception:
         pass
 
-    # 4. Regex CDN
+    # 4. Regex CDN sur le HTML brut
     cdn_re = re.compile(
-        r'https://assets\.adidas\.com/images/[^\s"\'\\<>]+\.(?:jpg|jpeg|png|webp)'
+        r'https://assets\.adidas\.com/images/[^\s"\'\\<>]+\.(?:jpg|jpeg|png|webp)',
+        re.I
     )
     for m in cdn_re.finditer(driver.page_source):
         add(m.group(0), "regex_cdn")
+
+    if images:
+        log(f"{len(images)} image(s) valide(s) par regex", "OK", sku=sku)
+    else:
+        log("Aucune image valide trouvee sur cette page.", "WARN", sku=sku)
 
     return images
 
@@ -242,19 +297,11 @@ def _walk_json(node, callback):
 
 
 # ================================================================
-# MODE 1 : Navigation sequentielle (SKU unique)
+# MODE 1 : Navigation sequentielle
 # ================================================================
 
 def navigate_single(driver, sku):
-    direct = f"https://www.adidas.co.uk/search?q={sku.upper()}"
-    log(f"Navigation directe : {direct}", sku=sku)
-    driver.get(direct)
-    time.sleep(3)
-
-    if "404" not in driver.title.lower() and sku.upper() in driver.current_url.upper():
-        log("Page produit OK", "OK", sku=sku)
-        return True
-
+    # Recherche directe par SKU sur adidas.co.uk
     search = f"https://www.adidas.co.uk/search?q={sku.upper()}"
     log(f"Recherche : {search}", sku=sku)
     driver.get(search)
@@ -272,6 +319,29 @@ def navigate_single(driver, sku):
         )
         href = first.get_attribute("href")
         log(f"Premier resultat : {href}", sku=sku)
+        driver.get(href)
+        time.sleep(3)
+        return True
+    except Exception:
+        pass
+
+    # Fallback : adidas.com/us
+    fallback = f"https://www.adidas.com/us/search?q={sku.upper()}"
+    log(f"Fallback : {fallback}", sku=sku)
+    driver.get(fallback)
+    time.sleep(3)
+
+    try:
+        first = WebDriverWait(driver, 10).until(
+            EC.element_to_be_clickable((By.CSS_SELECTOR,
+                "a.glass-product-card__assets-link, "
+                "a[data-testid='product-card-link'], "
+                "a[class*='product-card'], "
+                "div[class*='product-card'] a"
+            ))
+        )
+        href = first.get_attribute("href")
+        log(f"Premier resultat fallback : {href}", sku=sku)
         driver.get(href)
         time.sleep(3)
         return True
@@ -302,9 +372,8 @@ class RaceResult:
 
 
 def _race_worker(url, sku, headless, race):
-    """Thread worker : ouvre Chrome, charge l'URL, extrait les images."""
     if race.found.is_set():
-        return  # Deja gagne
+        return
 
     driver = None
     try:
@@ -327,7 +396,7 @@ def _race_worker(url, sku, headless, race):
             if race.claim(url, images):
                 log(f"[RACE] GAGNANT : {url}  ({len(images)} images)", "OK", sku=sku)
         else:
-            log(f"[RACE] Aucune image : {url}", "WARN", sku=sku)
+            log(f"[RACE] Aucune image valide : {url}", "WARN", sku=sku)
 
     except Exception as e:
         if not race.found.is_set():
@@ -341,24 +410,17 @@ def _race_worker(url, sku, headless, race):
 
 
 def navigate_race(sku, urls, headless, timeout=90):
-    """
-    Lance tous les URLs en parallele dans des threads independants.
-    Des qu'un thread trouve des images, on retourne immediatement.
-    Les autres threads continuent en arriere-plan puis se ferment.
-    """
     expanded = [u.replace("{sku}", sku.upper()) for u in urls]
     race = RaceResult()
-
-    log(f"[RACE] {len(expanded)} URLs en parallele pour {sku}", sku=sku)
+    log(f"[RACE] {len(expanded)} URLs en parallele", sku=sku)
 
     with ThreadPoolExecutor(max_workers=len(expanded)) as pool:
         for url in expanded:
             pool.submit(_race_worker, url, sku, headless, race)
-        # Attendre le premier gagnant ou le timeout
         race.found.wait(timeout=timeout)
 
     if not race.found.is_set():
-        log("Aucun URL n'a trouve d'images (timeout).", "ERR", sku=sku)
+        log("Aucun URL n'a trouve d'images valides (timeout).", "ERR", sku=sku)
         return []
 
     return race.winner_images
@@ -379,14 +441,12 @@ def download_image(url, dest):
         return False
 
 
-def download_all(images, output_dir, sku):
+def download_first(images, output_dir, sku):
     """
-    Telecharge uniquement la 1ere image.
+    Telecharge uniquement la 1ere image valide.
     Nom du fichier = SKU.ext  (ex: HT3463.jpg)
-    Retourne une liste avec 1 dict : { "filename", "path", "url" }
     """
     output_dir.mkdir(parents=True, exist_ok=True)
-    log(f"Dossier : {output_dir.resolve()}")
 
     img = images[0]
     url = img["url"]
@@ -395,10 +455,12 @@ def download_all(images, output_dir, sku):
     fname = f"{sku.upper()}.{ext}"
     dest  = output_dir / fname
 
-    log(f"{fname}", "DL", sku=sku)
+    log(f"Telechargement : {fname}", "DL", sku=sku)
     if download_image(url, dest):
-        log(f"{dest.stat().st_size // 1024} KB", "OK", sku=sku)
+        log(f"{dest.stat().st_size // 1024} KB — OK", "OK", sku=sku)
         return [{"filename": fname, "path": dest, "url": url}]
+
+    log("Echec du telechargement.", "ERR", sku=sku)
     return []
 
 
@@ -408,15 +470,13 @@ def download_all(images, output_dir, sku):
 
 def export_odoo_excel(df, sku_files, output_path):
     """
-    Genere un fichier Excel compatible import Odoo 18.
-    Colonne 'Variant Image' = nom du fichier image telecharge (ex: HT3463_01_view_list_0.jpg).
-    sku_files : { 'HT3463': ['HT3463_01_...jpg', 'HT3463_02_...jpg', ...] }
+    sku_files : { 'HT3463': ['HT3463.jpg'] }
+    Colonne Variant Image = nom du fichier (HT3463.jpg) ou vide.
     """
     out = df.copy()
     if ODOO_IMG_COLUMN not in out.columns:
         out[ODOO_IMG_COLUMN] = ""
 
-    # Pour chaque ligne on met le 1er fichier telecharge pour ce SKU
     out[ODOO_IMG_COLUMN] = out[ODOO_SKU_COLUMN].apply(
         lambda sku: sku_files.get(str(sku).strip(), [""])[0]
     )
@@ -425,9 +485,9 @@ def export_odoo_excel(df, sku_files, output_path):
     ws = wb.active
     ws.title = "product.product"
 
-    headers = list(out.columns)
-    hdr_fill = PatternFill("solid", start_color="1D3557")
-    hdr_font = Font(bold=True, color="FFFFFF", name="Arial", size=10)
+    headers   = list(out.columns)
+    hdr_fill  = PatternFill("solid", start_color="1D3557")
+    hdr_font  = Font(bold=True, color="FFFFFF", name="Arial", size=10)
     hdr_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
 
     for ci, col in enumerate(headers, 1):
@@ -449,8 +509,7 @@ def export_odoo_excel(df, sku_files, output_path):
             c.font = norm_font
             c.alignment = Alignment(vertical="center")
             if ci == img_ci:
-                # Vert si un nom de fichier est present, orange sinon
-                c.fill = ok_fill if val and not val in ("nan", "None", "") else miss_fill
+                c.fill = ok_fill if val else miss_fill
             elif ri % 2 == 0:
                 c.fill = alt_fill
 
@@ -458,7 +517,7 @@ def export_odoo_excel(df, sku_files, output_path):
         ODOO_EXT_COLUMN: 45,
         ODOO_SKU_COLUMN: 20,
         ODOO_VAR_COLUMN: 18,
-        ODOO_IMG_COLUMN: 70,
+        ODOO_IMG_COLUMN: 30,
     }
     for ci, col in enumerate(headers, 1):
         ws.column_dimensions[get_column_letter(ci)].width = col_widths.get(col, 20)
@@ -466,26 +525,26 @@ def export_odoo_excel(df, sku_files, output_path):
     ws.row_dimensions[1].height = 28
     ws.freeze_panes = "A2"
 
-    # Feuille resume
+    # Feuille Resume
+    img_col_letter = get_column_letter(img_ci)
+    n_rows = len(out) + 1
     ws2 = wb.create_sheet("Resume")
     ws2["A1"] = "Scraping Adidas -> Odoo 18"
     ws2["A1"].font = Font(bold=True, size=14, name="Arial")
-    ws2["A3"] = "Genere le"
-    ws2["B3"] = datetime.now().strftime("%d/%m/%Y %H:%M")
-    ws2["A4"] = "SKUs traites"
-    ws2["B4"] = len(sku_files)
-    ws2["A5"] = "SKUs avec images"
-    ws2["B5"] = sum(1 for v in sku_files.values() if v)
-    ws2["A6"] = "Variantes mises a jour"
-    img_col_letter = get_column_letter(img_ci)
-    n_rows = len(out) + 1
-    ws2["B6"] = f"=COUNTIF('product.product'!{img_col_letter}2:{img_col_letter}{n_rows},\"*.jpg\")+COUNTIF('product.product'!{img_col_letter}2:{img_col_letter}{n_rows},\"*.png\")+COUNTIF('product.product'!{img_col_letter}2:{img_col_letter}{n_rows},\"*.webp\")"
-    ws2["A7"] = "Variantes sans image"
-    ws2["B7"] = f"=B4-B5"
+    ws2["A3"] = "Genere le"        ; ws2["B3"] = datetime.now().strftime("%d/%m/%Y %H:%M")
+    ws2["A4"] = "SKUs traites"     ; ws2["B4"] = len(sku_files)
+    ws2["A5"] = "SKUs avec images" ; ws2["B5"] = sum(1 for v in sku_files.values() if v)
+    ws2["A6"] = "SKUs sans image"  ; ws2["B6"] = f"=B4-B5"
+    ws2["A7"] = "Variantes OK"
+    ws2["B7"] = (
+        f"=COUNTIF('product.product'!{img_col_letter}2:{img_col_letter}{n_rows},\"*.jpg\")"
+        f"+COUNTIF('product.product'!{img_col_letter}2:{img_col_letter}{n_rows},\"*.png\")"
+        f"+COUNTIF('product.product'!{img_col_letter}2:{img_col_letter}{n_rows},\"*.webp\")"
+    )
     for cell in ["A3","A4","A5","A6","A7"]:
         ws2[cell].font = Font(bold=True, name="Arial", size=10)
-    ws2.column_dimensions["A"].width = 25
-    ws2.column_dimensions["B"].width = 30
+    ws2.column_dimensions["A"].width = 22
+    ws2.column_dimensions["B"].width = 28
 
     wb.save(str(output_path))
     log(f"Export Odoo 18 : {output_path.resolve()}", "OK")
@@ -496,10 +555,6 @@ def export_odoo_excel(df, sku_files, output_path):
 # ================================================================
 
 def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls):
-    """
-    Retourne une liste de dicts { filename, path, url }
-    ou une liste d'URLs (dry-run).
-    """
     urls = custom_urls if custom_urls else DEFAULT_URLS
 
     if use_race:
@@ -516,15 +571,14 @@ def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls):
             driver.quit()
 
     if not images:
-        log("Aucune image trouvee.", "WARN", sku=sku)
+        log("Aucune image valide trouvee.", "WARN", sku=sku)
         return []
 
-    if not dry_run:
-        return download_all(images, output_base, sku)
-    else:
-        for i, img in enumerate(images, 1):
-            print(f"    {i:>2}. {img['url'][:80]}")
-        return [{"filename": "", "url": img["url"]} for img in images]
+    if dry_run:
+        log(f"[DRY-RUN] 1ere image valide : {images[0]['url']}", "OK", sku=sku)
+        return [{"filename": "", "url": images[0]["url"]}]
+
+    return download_first(images, output_base, sku)
 
 
 def run_single(sku, output_base, headless, dry_run, use_race, custom_urls):
@@ -547,24 +601,28 @@ def run_excel_batch(excel_path, output_base, headless, dry_run, use_race, custom
         sys.exit(1)
 
     skus = df[ODOO_SKU_COLUMN].dropna().unique().tolist()
-    log(f"{len(skus)} SKU(s) : {skus}")
+    log(f"{len(skus)} SKU(s) a traiter : {skus}")
 
-    # sku_files : { "HT3463": ["HT3463_01_view_list_0.jpg", "HT3463_02_...jpg", ...] }
-    sku_files = {}
+    sku_files = {}   # { "HT3463": ["HT3463.jpg"] }
 
     for i, sku in enumerate(skus, 1):
         sku = str(sku).strip()
         print(f"\n[{i}/{len(skus)}] SKU: {sku} {'─'*40}")
-        result = scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls)
-        # result = liste de dicts { filename, path, url }
+        result    = scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls)
         sku_files[sku] = [r["filename"] for r in result if r.get("filename")]
 
     if not dry_run:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        odoo_path = output_base / f"odoo18_import_{ts}.xlsx"
         output_base.mkdir(parents=True, exist_ok=True)
+        ts        = datetime.now().strftime("%Y%m%d_%H%M%S")
+        odoo_path = output_base / f"odoo18_import_{ts}.xlsx"
         export_odoo_excel(df, sku_files, odoo_path)
-        print(f"\n  Fichier Odoo 18 pret : {odoo_path.resolve()}\n")
+
+        found  = sum(1 for v in sku_files.values() if v)
+        missed = [s for s, v in sku_files.items() if not v]
+        print(f"\n  Images trouvees  : {found}/{len(skus)}")
+        if missed:
+            print(f"  SKUs sans image  : {', '.join(missed)}")
+        print(f"  Fichier Odoo 18  : {odoo_path.resolve()}\n")
 
 
 # ================================================================
@@ -585,16 +643,16 @@ def main():
         help=(
             "URLs a tester en parallele (mode course async).\n"
             "Utilisez {sku} comme placeholder :\n"
-            "  --urls https://www.adidas.co.uk/search?q={sku}\n"
-            "         https://www.adidas.com/us/search?q={sku}\n"
-            "Sans valeur = URLs par defaut (6 regions)."
+            "  --urls https://www.adidas.co.uk/{sku}.html\n"
+            "         https://www.adidas.com/us/{sku}.html\n"
+            "Sans valeur = URLs par defaut."
         )
     )
     parser.add_argument("--output",   default="./adidas_images", help="Dossier de sortie")
     parser.add_argument("--headless", action="store_true",        help="Chrome sans fenetre")
     parser.add_argument("--dry-run",  action="store_true",        help="Liste sans telecharger")
 
-    args    = parser.parse_args()
+    args        = parser.parse_args()
     use_race    = args.urls is not None
     custom_urls = args.urls if args.urls else []
     output_base = Path(args.output)
