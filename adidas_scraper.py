@@ -76,7 +76,7 @@ DEFAULT_URLS = [
     "https://www.prodirectsport.com/search/?qq={sku}",
     "https://soneesports.com/search?q={sku}",
     "https://www.intersport.fr/search/?text={sku}",
-    "https://www.sport365.cz/hledej/?f={sku}",
+    "https://www.adidas.com.my/en/search?q={sku}",
     "https://actionwear.dz/index.php?page=products&pages=0&keyword={sku}",
     "https://www.adidas.com.lb/en/search?q={sku}",
     "https://www.adidas.com.tr/tr/search?q={sku}",
