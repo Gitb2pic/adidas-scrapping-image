@@ -78,10 +78,8 @@ DEFAULT_URLS = [
     "https://www.intersport.fr/search/?text={sku}",
     "https://www.sport365.cz/hledej/?f={sku}",
     "https://actionwear.dz/index.php?page=products&pages=0&keyword={sku}",
-    "https://www.adidas.com.tr/search?q={sku}",
-    "https://actionwear.dz/index.php?page=products&pages=0&keyword={sku}",
     "https://www.adidas.com.lb/en/search?q={sku}",
-    "https://www.adidas.com.tr/search?q={sku}",
+    "https://www.adidas.com.tr/tr/search?q={sku}",
 ]
 
 DOWNLOAD_HEADERS = {
