@@ -66,7 +66,6 @@ DEFAULT_URLS = [
     "https://www.adidas.com.au/search?q={sku}",
     "https://www.adidas.co.in/search?q={sku}",
     "https://runners.ae/#8495/fullscreen/m=and&q={sku}",
-    "https://www.spartoo.com/ajax/search_word.php?debut={sku}",
     "https://www.adidas.co.th/en/search?q={sku}",
     "https://www.adidas.co.uk/search?q={sku}",
     "https://www.adidas.com/us/search?q={sku}",
@@ -74,12 +73,12 @@ DEFAULT_URLS = [
     "https://www.adidas.de/search?q={sku}",
     "https://www.adidas.com/om/en/search?q={sku}",
     "https://www.prodirectsport.com/search/?qq={sku}",
-    "https://soneesports.com/search?q={sku}",
     "https://www.intersport.fr/search/?text={sku}",
     "https://www.sport365.cz/hledej/?f={sku}",
     "https://actionwear.dz/index.php?page=products&pages=0&keyword={sku}",
     "https://www.adidas.com.lb/en/search?q={sku}",
     "https://www.adidas.com.tr/tr/search?q={sku}",
+    "https://adidas.kz/ru/search?s={sku}"
 ]
 
 DOWNLOAD_HEADERS = {
