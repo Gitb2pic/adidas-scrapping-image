@@ -414,21 +414,26 @@ def download_image(url, dest):
 def download_first(images, output_dir, sku):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Garantie que seule la première image (images[0]) est sélectionnée
-    img = images[0]
-    url = img["url"]
-    
-    clean_url = url.split("?")[0]
-    ext = clean_url.rsplit(".", 1)[-1] if "." in clean_url else "jpg"
-    ext = ext if ext.lower() in {"jpg", "jpeg", "png", "webp"} else "jpg"
-    
-    fname = f"{sku.upper()}.{ext}"
-    dest  = output_dir / fname
+    # Priorite a images[1], fallback sur images[0] si erreur ou absent
+    for idx in (1, 0):
+        if idx >= len(images):
+            continue
+        img = images[idx]
+        url = img["url"]
 
-    log(f"Lancement du telechargement de la PREMIERE image: {fname}", "DL", sku=sku)
-    if download_image(url, dest):
-        log(f"Telechargement termine : {dest.stat().st_size // 1024} KB", "OK", sku=sku)
-        return [{"filename": fname, "path": dest, "url": url}]
+        clean_url = url.split("?")[0]
+        ext = clean_url.rsplit(".", 1)[-1] if "." in clean_url else "jpg"
+        ext = ext if ext.lower() in {"jpg", "jpeg", "png", "webp"} else "jpg"
+
+        fname = f"{sku.upper()}.{ext}"
+        dest  = output_dir / fname
+
+        log(f"Telechargement image[{idx}]: {fname}", "DL", sku=sku)
+        if download_image(url, dest):
+            log(f"Telechargement termine : {dest.stat().st_size // 1024} KB", "OK", sku=sku)
+            return [{"filename": fname, "path": dest, "url": url}]
+        else:
+            log(f"Echec image[{idx}], tentative suivante...", "WARN", sku=sku)
 
     log("Impossible de sauvegarder le fichier.", "ERR", sku=sku)
     return []
