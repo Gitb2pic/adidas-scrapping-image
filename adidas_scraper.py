@@ -59,6 +59,7 @@ except ImportError:
 # ================================================================
 
 DEFAULT_URLS = [
+    "https://www.google.com/search?q={sku}+product&udm=2",
     "https://mostlyheardrarelyseen8bit.com/search?q={sku}",
     "https://www.farfetch.com/be/search?q={sku}",
 ]
@@ -288,36 +289,59 @@ def _walk_json(node, callback):
 
 
 # ================================================================
-# MODE 1 : Navigation sequentielle
+# MODE 1 : Navigation sequentielle (tout site)
 # ================================================================
 
-def navigate_single(driver, sku):
-    search = DEFAULT_URLS[0].replace("{sku}", sku.upper())
+# Selecteurs generiques pour detecter un lien produit sur n'importe quel site
+PRODUCT_LINK_SELECTORS = [
+    # Selecteurs specifiques e-commerce
+    "a.grid-view-item__link",
+    "a.product-card",
+    "a.grid-product__link",
+    "a.product-item__link",
+    "a[data-testid='product-card-link']",
+    "a[class*='product-card']",
+    "div[class*='product-card'] a",
+    "a[class*='product-link']",
+    "a[class*='product-item']",
+    "a[class*='product-tile']",
+    # Selecteurs generiques (tout site)
+    "a[href*='/product']",
+    "a[href*='/products/']",
+    "a[href*='/p/']",
+    "a[href*='/item/']",
+    "a[href*='/dp/']",
+    "[class*='product'] a[href]",
+    "[class*='item'] a[href]",
+    "[class*='card'] a[href]",
+    "[class*='tile'] a[href]",
+    "[data-product] a[href]",
+    "[data-item] a[href]",
+]
+
+
+def navigate_single(driver, sku, url=None):
+    search = (url or DEFAULT_URLS[0]).replace("{sku}", sku.upper())
     log(f"Recherche : {search}", sku=sku)
     driver.get(search)
     accept_cookies(driver)
     time.sleep(3)
 
-    try:
-        first = WebDriverWait(driver, 10).until(
-            EC.element_to_be_clickable((By.CSS_SELECTOR,
-                "a.grid-view-item__link, "
-                "a.product-card, "
-                "a.grid-product__link, "
-                "a.product-item__link, "
-                "a[data-testid='product-card-link'], "
-                "a[class*='product-card'], "
-                "div[class*='product-card'] a"
-            ))
-        )
-        href = first.get_attribute("href")
-        log(f"Navigation vers le produit : {href}", sku=sku)
-        driver.get(href)
-        time.sleep(3)
-        return True
-    except Exception:
-        log(f"Extraction directe depuis la page de recherche initiee.", "INFO", sku=sku)
-        return True
+    # Essayer de cliquer sur le premier produit trouve
+    for selector in PRODUCT_LINK_SELECTORS:
+        try:
+            el = driver.find_element(By.CSS_SELECTOR, selector)
+            href = el.get_attribute("href")
+            if href and href.startswith("http"):
+                log(f"Produit detecte : {href}", sku=sku)
+                driver.get(href)
+                time.sleep(3)
+                return True
+        except Exception:
+            continue
+
+    log("Extraction directe depuis la page de recherche.", "INFO", sku=sku)
+    return True
 
 
 # ================================================================
@@ -356,6 +380,22 @@ def _race_worker(url, sku, headless, race):
         if "404" in driver.title.lower():
             log(f"[RACE] Erreur 404 : {url}", "WARN", sku=sku)
             return
+
+        if race.found.is_set():
+            return
+
+        # Essayer de naviguer vers une page produit
+        for selector in PRODUCT_LINK_SELECTORS:
+            try:
+                el = driver.find_element(By.CSS_SELECTOR, selector)
+                href = el.get_attribute("href")
+                if href and href.startswith("http"):
+                    log(f"[RACE] Produit detecte : {href}", sku=sku)
+                    driver.get(href)
+                    time.sleep(3)
+                    break
+            except Exception:
+                continue
 
         if race.found.is_set():
             return
@@ -540,12 +580,12 @@ def export_odoo_excel(df, sku_files, output_path):
 def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls):
     urls = custom_urls if custom_urls else DEFAULT_URLS
 
-    if use_race:
+    if use_race or len(urls) > 1:
         images = navigate_race(sku, urls, headless)
     else:
         driver = build_driver(headless)
         try:
-            if not navigate_single(driver, sku):
+            if not navigate_single(driver, sku, url=urls[0] if urls else None):
                 return {"all": [], "preferred": None}
             accept_cookies(driver)
             time.sleep(2)
@@ -629,7 +669,16 @@ def main():
         help=(
             "Activer le mode de balayage asynchrone [RACE] :\n"
             "  --urls https://site.com/search?q={sku}\n"
-            "Mettre l'argument vide pour utiliser la liste par defaut."
+            "  --urls   (vide = liste par defaut + Google Images)\n"
+            "Utiliser {sku} comme placeholder dans l'URL."
+        )
+    )
+    parser.add_argument(
+        "--sites", nargs="+", metavar="URL",
+        help=(
+            "Ajouter des sites personnalises a la liste de recherche :\n"
+            "  --sites https://www.amazon.com/s?k={sku} https://www.ebay.com/sch/i.html?_nkw={sku}\n"
+            "Ces URLs seront ajoutees aux URLs par defaut."
         )
     )
     parser.add_argument("--output",   default="./images_dl", help="Repertoire cible")
@@ -637,8 +686,11 @@ def main():
     parser.add_argument("--dry-run",  action="store_true",   help="Effectuer une simulation sans telecharger")
 
     args        = parser.parse_args()
-    use_race    = args.urls is not None
+    use_race    = args.urls is not None or args.sites is not None
     custom_urls = args.urls if args.urls else []
+    # Ajouter les sites personnalises
+    if args.sites:
+        custom_urls.extend(args.sites)
     output_base = Path(args.output)
 
     if args.excel:
