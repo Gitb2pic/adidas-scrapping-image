@@ -411,32 +411,45 @@ def download_image(url, dest):
         return False
 
 
-def download_first(images, output_dir, sku):
+def download_all(images, output_dir, sku):
+    """
+    Telecharge TOUTES les images du produit.
+    Retourne un dict avec :
+      - "all": liste de tous les fichiers telecharges
+      - "preferred": le fichier prefere pour Excel (images[1] sinon images[0])
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
+    downloaded = []
+    preferred  = None
 
-    # Priorite a images[1], fallback sur images[0] si erreur ou absent
-    for idx in (1, 0):
-        if idx >= len(images):
-            continue
-        img = images[idx]
+    for idx, img in enumerate(images):
         url = img["url"]
-
         clean_url = url.split("?")[0]
         ext = clean_url.rsplit(".", 1)[-1] if "." in clean_url else "jpg"
         ext = ext if ext.lower() in {"jpg", "jpeg", "png", "webp"} else "jpg"
 
-        fname = f"{sku.upper()}.{ext}"
+        fname = f"{sku.upper()}_{idx}.{ext}"
         dest  = output_dir / fname
 
         log(f"Telechargement image[{idx}]: {fname}", "DL", sku=sku)
         if download_image(url, dest):
-            log(f"Telechargement termine : {dest.stat().st_size // 1024} KB", "OK", sku=sku)
-            return [{"filename": fname, "path": dest, "url": url}]
+            log(f"OK : {dest.stat().st_size // 1024} KB", "OK", sku=sku)
+            entry = {"filename": fname, "path": dest, "url": url, "index": idx}
+            downloaded.append(entry)
+            # Priorite a images[1] pour Excel, fallback images[0]
+            if idx == 1:
+                preferred = entry
+            elif idx == 0 and preferred is None:
+                preferred = entry
         else:
-            log(f"Echec image[{idx}], tentative suivante...", "WARN", sku=sku)
+            log(f"Echec image[{idx}]", "WARN", sku=sku)
 
-    log("Impossible de sauvegarder le fichier.", "ERR", sku=sku)
-    return []
+    if downloaded:
+        log(f"{len(downloaded)}/{len(images)} image(s) telechargee(s)", "OK", sku=sku)
+    else:
+        log("Impossible de sauvegarder aucun fichier.", "ERR", sku=sku)
+
+    return {"all": downloaded, "preferred": preferred}
 
 
 # ================================================================
@@ -533,7 +546,7 @@ def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls):
         driver = build_driver(headless)
         try:
             if not navigate_single(driver, sku):
-                return []
+                return {"all": [], "preferred": None}
             accept_cookies(driver)
             time.sleep(2)
             images = extract_images(driver, sku)
@@ -542,20 +555,21 @@ def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls):
 
     if not images:
         log("Processus termine : Aucune image", "WARN", sku=sku)
-        return []
+        return {"all": [], "preferred": None}
 
     if dry_run:
         log(f"[DRY-RUN] Cible detectee : {images[0]['url']}", "OK", sku=sku)
-        return [{"filename": "", "url": images[0]["url"]}]
+        return {"all": [{"filename": "", "url": img["url"]} for img in images],
+                "preferred": {"filename": "", "url": images[1]["url"] if len(images) > 1 else images[0]["url"]}}
 
-    return download_first(images, output_base, sku)
+    return download_all(images, output_base, sku)
 
 
 def run_single(sku, output_base, headless, dry_run, use_race, custom_urls):
     mode = "RACE (Analyse multi-URL)" if use_race else "Sequentiel"
     banner(f"MODE 1 — SKU : {sku.upper()}  [{mode}]")
     result = scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls)
-    if not result:
+    if not result or not result.get("all"):
         sys.exit(1)
 
 
@@ -578,8 +592,10 @@ def run_excel_batch(excel_path, output_base, headless, dry_run, use_race, custom
     for i, sku in enumerate(skus, 1):
         sku = str(sku).strip()
         print(f"\n[{i}/{len(skus)}] Element: {sku} {'─'*35}")
-        result    = scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls)
-        sku_files[sku] = [r["filename"] for r in result if r.get("filename")]
+        result = scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls)
+        # Pour Excel : uniquement l'image preferee (images[1] ou fallback images[0])
+        pref = result.get("preferred") if result else None
+        sku_files[sku] = [pref["filename"]] if pref and pref.get("filename") else []
 
     if not dry_run:
         output_base.mkdir(parents=True, exist_ok=True)
