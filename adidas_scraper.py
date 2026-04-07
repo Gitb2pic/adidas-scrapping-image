@@ -415,7 +415,7 @@ def download_first(images, output_dir, sku):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     # Garantie que seule la première image (images[0]) est sélectionnée
-    img = images[1]
+    img = images[0]
     url = img["url"]
     
     clean_url = url.split("?")[0]
