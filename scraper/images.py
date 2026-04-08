@@ -14,6 +14,7 @@ Fonctions publiques :
 
 import re    # Expressions regulieres pour la validation et le nettoyage d'URLs
 import json  # Pour parser les donnees JSON embarquees dans les pages
+import time  # Pour les delais d'attente apres le scroll (lazy loading)
 
 from selenium.webdriver.common.by import By  # Localisation d'elements Selenium
 
@@ -55,11 +56,13 @@ def is_valid_image(url: str) -> bool:
     Verifie qu'une URL correspond a une vraie image de produit.
 
     Filtre les faux positifs : logos, icones, badges, favicons, placeholders, etc.
-    Accepte les images avec une extension valide (jpg, png, webp) ou provenant
-    de CDN connus (Shopify).
+    Accepte les images avec :
+    - Une extension valide (jpg, jpeg, png, webp, avif)
+    - Une URL provenant d'un CDN e-commerce connu
+    - Une URL contenant un chemin typique d'image produit
 
     Args:
-        url: L'URL de l'image a valider (sans parametres de requete).
+        url: L'URL de l'image a valider.
 
     Returns:
         True si l'URL est une image de produit valide, False sinon.
@@ -74,17 +77,69 @@ def is_valid_image(url: str) -> bool:
         "/logo", "/icon", "/badge", "/banner",
         "/flag", "/avatar", "/favicon", "/sprite",
         "placeholder", "fallback", "default",
+        "/pixel", "/tracking", "/analytics",
+        "/social", "/share", "/button",
     ]
     # Si l'URL contient un des patterns exclus, c'est pas une image produit
     if any(p in url_lower for p in excluded_patterns):
         return False
 
+    # Rejette les images trop petites (1x1 pixels de tracking, icones minuscules)
+    # Detecte les patterns comme _1x1, /1x1, -1x1 dans l'URL
+    if re.search(r'[/_-]1x1[./]', url_lower):
+        return False
+
     # Verifie si l'URL se termine par une extension d'image valide
-    if re.search(r'\.(jpg|jpeg|png|webp)$', clean, re.I):
+    if re.search(r'\.(jpg|jpeg|png|webp|avif)$', clean, re.I):
         return True
 
-    # Accepte les URLs provenant de CDN Shopify ou contenant /products/ ou /files/
-    if "cdn.shopify.com" in url_lower or "/products/" in url_lower or "/files/" in url_lower:
+    # Verifie si l'extension est presente avant des parametres de requete
+    # Ex: image.jpg?w=800 -> le split("?")[0] gere deja ca, mais certaines
+    # URLs ont l'extension suivie de parametres de chemin : image.jpg/resize/800
+    if re.search(r'\.(jpg|jpeg|png|webp|avif)[/?&]', url_lower):
+        return True
+
+    # Liste des domaines CDN e-commerce connus
+    # Ces CDN servent exclusivement des images de produits
+    known_cdns = [
+        # Shopify
+        "cdn.shopify.com",
+        # Scene7 / Adobe Dynamic Media (Hugo Boss, Adidas, Nike, Zara, etc.)
+        "/is/image/",
+        "/is/render/",
+        "scene7.com",
+        # Cloudinary (utilise par beaucoup de sites e-commerce)
+        "cloudinary.com",
+        "res.cloudinary.com",
+        # Imgix (CDN d'images populaire)
+        "imgix.net",
+        # Contentful
+        "ctfassets.net",
+        # Shopify alternatif
+        "/products/",
+        "/files/",
+        # Farfetch
+        "farfetch.com/img/",
+        # Hugo Boss
+        "hugoboss.com",
+        # Adidas
+        "adidas.com",
+        "assets.adidas.com",
+        # Zalando
+        "zalando.com",
+        "ztat.net",
+        # Amazon
+        "images-na.ssl-images-amazon.com",
+        "m.media-amazon.com",
+        # Generic e-commerce patterns
+        "/product-img/",
+        "/product_images/",
+        "/media/catalog/",
+        "/images/products/",
+        "/img/product/",
+    ]
+    # Si l'URL contient un des CDN connus, c'est une image valide
+    if any(cdn in url_lower for cdn in known_cdns):
         return True
 
     # Par defaut, l'URL n'est pas consideree comme une image valide
@@ -123,6 +178,10 @@ def extract_images(driver, sku):
             url:   L'URL brute de l'image.
             label: Etiquette decrivant la source (html_img, html_srcset, etc.).
         """
+        # Ignore les data URIs (placeholders SVG, base64, etc.)
+        if url.startswith("data:"):
+            return
+
         # Corrige les URLs qui commencent par "//" (protocole relatif)
         if url.startswith("//"):
             url = "https:" + url
@@ -143,51 +202,105 @@ def extract_images(driver, sku):
             # Ajoute l'image a la liste des resultats
             images.append({"url": url, "label": label})
 
-    # ---- STRATEGIE 1 : HTML DOM ----
-    # Priorite absolue : le premier element lu = la premiere image sur la page
+    # ---- STRATEGIE 0 : Meta tags (og:image, twitter:image) ----
+    # Les meta tags sont TOUJOURS presents dans le HTML initial,
+    # meme sur les sites full-JS (Hugo Boss, etc.) qui utilisent le lazy loading.
     try:
-        # Selecteurs CSS cibles, du plus specifique au plus generique
+        for sel in ('meta[property="og:image"]', 'meta[name="twitter:image"]'):
+            for el in driver.find_elements(By.CSS_SELECTOR, sel):
+                # Le contenu de l'image est dans l'attribut "content"
+                val = el.get_attribute("content") or ""
+                if val.startswith("http") or val.startswith("//"):
+                    add(val, "meta_og")
+    except Exception:
+        pass
+
+    # ---- SCROLL pour declencher le lazy loading ----
+    # Beaucoup de sites (Hugo Boss, Adidas, etc.) ne chargent les images
+    # que quand elles sont visibles dans le viewport. On scrolle pour forcer le chargement.
+    try:
+        # Scrolle jusqu'au milieu de la page pour declencher le lazy loading
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2)")
+        time.sleep(1)
+        # Revient en haut pour que le DOM soit dans l'etat attendu
+        driver.execute_script("window.scrollTo(0, 0)")
+        time.sleep(1)
+    except Exception:
+        pass
+
+    # ---- STRATEGIE 1 : Extraction JS de TOUS les attributs ----
+    # Au lieu de verifier une liste fixe d'attributs, on utilise JavaScript
+    # pour scanner TOUS les attributs de chaque <img> et <source>.
+    # Cela capture les attributs custom (data-normal-src, data-original-src, etc.)
+    try:
+        all_img_urls = driver.execute_script("""
+            var urls = [];
+            document.querySelectorAll('img, picture source, [role="img"]').forEach(function(el) {
+                for (var i = 0; i < el.attributes.length; i++) {
+                    var val = el.attributes[i].value;
+                    if (val && (val.startsWith('http') || val.startsWith('//'))) {
+                        urls.push(val);
+                    }
+                    // Gere les srcset (plusieurs URLs separees par des virgules)
+                    if (val && el.attributes[i].name.indexOf('srcset') !== -1) {
+                        val.split(',').forEach(function(part) {
+                            var u = part.trim().split(' ')[0];
+                            if (u && (u.startsWith('http') || u.startsWith('//'))) {
+                                urls.push(u);
+                            }
+                        });
+                    }
+                }
+            });
+            return urls;
+        """)
+        # Ajoute chaque URL trouvee par le scan JS
+        for url in (all_img_urls or []):
+            add(url, "js_attr_scan")
+
+        # Si des images ont ete trouvees, on retourne directement
+        if images:
+            log(f"{len(images)} image(s) valide(s) extraite(s) du DOM", "OK", sku=sku)
+            return images
+    except Exception:
+        pass
+
+    # ---- STRATEGIE 1b : Fallback DOM classique ----
+    # Si le scan JS a echoue, on parcourt les elements avec des selecteurs CSS
+    try:
         selectors = [
-            # Images avec classe contenant "product"
             "img[class*='product']",
-            # Images dans une grille
+            "img[class*='gallery']",
             "img[class*='grid']",
-            # Images dans une carte
             "img[class*='card']",
-            # Images a l'interieur d'un lien produit
             "a[class*='product'] img",
-            # Toutes les images (dernier recours)
+            "picture source",
+            "picture img",
             "img",
         ]
+        img_attrs = (
+            "src", "data-src", "data-lazy-src",
+            "data-zoom-src", "data-image", "data-original",
+            "srcset", "data-srcset",
+        )
 
-        # Parcourt chaque selecteur
         for sel in selectors:
-            # Trouve tous les elements correspondant au selecteur
             for el in driver.find_elements(By.CSS_SELECTOR, sel):
-                # Verifie les 4 attributs possibles contenant une URL d'image
-                for attr in ("src", "data-src", "srcset", "data-srcset"):
-                    # Recupere la valeur de l'attribut (ou chaine vide si absent)
+                for attr in img_attrs:
                     val = el.get_attribute(attr) or ""
-                    # Les attributs srcset contiennent plusieurs URLs separees par des virgules
                     if "srcset" in attr and val:
-                        # Parcourt chaque URL dans le srcset
                         for part in val.split(","):
-                            # Extrait l'URL (avant l'espace et le descripteur de taille)
                             part_url = part.strip().split(" ")[0]
-                            # Verifie que c'est une URL absolue
                             if part_url.startswith("http") or part_url.startswith("//"):
                                 add(part_url, "html_srcset")
                     else:
-                        # Attributs simples (src, data-src) : une seule URL
                         if val.startswith("http") or val.startswith("//"):
                             add(val, "html_img")
 
-        # Si des images ont ete trouvees via le DOM, on retourne directement
         if images:
             log(f"{len(images)} image(s) valide(s) extraite(s) du visuel HTML", "OK", sku=sku)
             return images
     except Exception:
-        # En cas d'erreur DOM, on passe a la strategie suivante
         pass
 
     # ---- STRATEGIE 2 : Objets JSON embarques ----
@@ -217,14 +330,22 @@ def extract_images(driver, sku):
 
     # ---- STRATEGIE 3 : Regex de secours ----
     # Recherche brute de toutes les URLs d'images dans le code source HTML
+    # Pattern 1 : URLs avec extension d'image classique
     cdn_re = re.compile(
-        # Match les URLs se terminant par .jpg, .jpeg, .png ou .webp
-        r'(?:https?:)?//[^\s"\'\\<>]+\.(?:jpg|jpeg|png|webp)', re.I
+        r'(?:https?:)?//[^\s"\'\\<>]+\.(?:jpg|jpeg|png|webp|avif)', re.I
     )
     # Parcourt toutes les correspondances dans le code source de la page
     for m in cdn_re.finditer(driver.page_source):
         # Ajoute chaque URL trouvee avec le label "regex_cdn"
         add(m.group(0), "regex_cdn")
+
+    # Pattern 2 : URLs Scene7 / Dynamic Media (Hugo Boss, Adidas, Nike, etc.)
+    # Ces URLs n'ont pas d'extension mais contiennent "/is/image/" ou "/is/render/"
+    scene7_re = re.compile(
+        r'(?:https?:)?//[^\s"\'\\<>]+/is/(?:image|render)/[^\s"\'\\<>]+', re.I
+    )
+    for m in scene7_re.finditer(driver.page_source):
+        add(m.group(0), "regex_scene7")
 
     # Log du resultat de la recherche Regex
     if images:
