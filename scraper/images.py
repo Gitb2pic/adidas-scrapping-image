@@ -1,7 +1,8 @@
 """
 Extraction et validation des images depuis une page web.
 
-Ce module fournit trois strategies d'extraction (par ordre de priorite) :
+Ce module fournit quatre strategies d'extraction (par ordre de priorite) :
+0. Meta tags  : extrait les URLs depuis og:image et twitter:image
 1. HTML DOM   : parcourt les balises <img> de la page
 2. JSON cache : explore les objets JS embarques (__NEXT_DATA__, etc.)
 3. Regex      : recherche brute des URLs d'images dans le code source
@@ -14,6 +15,7 @@ Fonctions publiques :
 
 import re    # Expressions regulieres pour la validation et le nettoyage d'URLs
 import json  # Pour parser les donnees JSON embarquees dans les pages
+import time  # Pour les delais d'attente apres le scroll
 import time  # Pour les delais d'attente apres le scroll (lazy loading)
 
 from selenium.webdriver.common.by import By  # Localisation d'elements Selenium
@@ -182,6 +184,9 @@ def extract_images(driver, sku):
         if url.startswith("data:"):
             return
 
+        # Ignore les data URIs (placeholders SVG, base64, etc.)
+        if url.startswith("data:"):
+            return
         # Corrige les URLs qui commencent par "//" (protocole relatif)
         if url.startswith("//"):
             url = "https:" + url

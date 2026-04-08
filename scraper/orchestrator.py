@@ -46,7 +46,7 @@ def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls, brand
     Returns:
         Dict avec deux cles :
         - "all":       Liste de tous les fichiers telecharges.
-        - "preferred": Le fichier prefere pour Excel (images[1] ou fallback images[0]).
+        - "preferred": Le fichier prefere pour Excel (images[0]).
         Retourne des listes vides si aucune image n'est trouvee.
     """
     # Utilise les URLs personnalisees si fournies, sinon les URLs par defaut
@@ -92,10 +92,10 @@ def scrape_sku(sku, output_base, headless, dry_run, use_race, custom_urls, brand
         return {
             # Liste de toutes les URLs trouvees (sans fichier)
             "all": [{"filename": "", "url": img["url"]} for img in images],
-            # Image preferee : images[1] si disponible, sinon images[0]
+            # Image preferee : toujours images[0] (premiere image)
             "preferred": {
                 "filename": "",
-                "url": images[1]["url"] if len(images) > 1 else images[0]["url"],
+                "url": images[0]["url"],
             },
         }
 

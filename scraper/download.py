@@ -49,9 +49,7 @@ def download_all(images, output_dir, sku):
     Chaque image est sauvegardee sous le nom SKU_INDEX.extension
     (ex: MH03AC-T03RED_0.png, MH03AC-T03RED_1.jpg, etc.).
 
-    L'image preferee pour l'export Excel est :
-    - images[1] en priorite (deuxieme image, souvent la meilleure vue)
-    - images[0] en fallback (premiere image si la deuxieme echoue)
+    L'image preferee pour l'export Excel est images[0] (premiere image = image principale).
 
     Args:
         images:     Liste de dicts [{"url": str, "label": str}, ...].
@@ -97,11 +95,8 @@ def download_all(images, output_dir, sku):
             # Ajoute l'entree a la liste des telechargements reussis
             downloaded.append(entry)
             # Selection de l'image preferee pour Excel :
-            # Priorite a images[1] (deuxieme image)
-            if idx == 1:
-                preferred = entry
-            # Fallback sur images[0] (premiere image) si images[1] pas encore vu
-            elif idx == 0 and preferred is None:
+            # Toujours prendre images[0] (premiere image = image principale du produit)
+            if idx == 0:
                 preferred = entry
         else:
             # Echec du telechargement de cette image
