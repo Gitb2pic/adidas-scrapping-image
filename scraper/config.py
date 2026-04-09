@@ -23,7 +23,8 @@ DEFAULT_URLS = [
     # # Recherche sur Farfetch (marketplace mode luxe)
     # "https://www.farfetch.com/be/search?q={sku}",
 
-    "https://www.hugoboss.com/search?q={sku}"
+    "https://www.hugoboss.com/search?q={sku}",
+    "https://gomez.fr/fr/search2?q={sku}"
 ]
 
 # ================================================================
