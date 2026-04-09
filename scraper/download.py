@@ -69,7 +69,7 @@ def download_all(images, output_dir, sku):
     preferred = None
 
     # Parcourt chaque image avec son index
-    for idx, img in enumerate(images):
+    for idx, img in enumerate(images[:4]):
         # Recupere l'URL de l'image
         url = img["url"]
         # Supprime les parametres de requete pour detecter l'extension
