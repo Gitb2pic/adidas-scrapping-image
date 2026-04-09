@@ -109,13 +109,20 @@ def main():
     # Option --extract-colors : extraction du code couleur depuis les URLs d'un fichier Excel/CSV
     parser.add_argument(
         "--extract-colors",
-        nargs=2,
-        metavar=("FICHIER", "COLONNE_URL"),
+        metavar="FICHIER",
         help=(
             "Extraire le code couleur depuis les URLs d'un fichier Excel/CSV :\n"
-            "  --extract-colors produits.xlsx 'URL Produit'\n"
+            "  --extract-colors produits.xlsx\n"
+            "  --extract-colors produits.xlsx --url-column 'URL Produit'\n"
+            "La colonne URL est detectee automatiquement si --url-column n'est pas fourni.\n"
             "Ajoute une colonne 'Code_Couleur_Extrait' au fichier."
         ),
+    )
+    # Option --url-column : nom de la colonne contenant les URLs (optionnel)
+    parser.add_argument(
+        "--url-column",
+        default=None,
+        help="Nom de la colonne contenant les URLs (auto-detecte si omis).",
     )
 
     # Parse les arguments passes en ligne de commande
@@ -124,14 +131,16 @@ def main():
     # ---- Mode extraction couleur (independant du scraping) ----
     if args.extract_colors:
         import pandas as pd
-        # Recupere le chemin du fichier et le nom de la colonne URL
-        file_path, url_column = args.extract_colors
+        # Recupere le chemin du fichier
+        file_path = args.extract_colors
+        # Colonne URL : specifiee par l'utilisateur ou auto-detectee (None)
+        url_column = args.url_column
         # Detecte le format du fichier (Excel ou CSV)
         if file_path.endswith(".csv"):
             df = pd.read_csv(file_path, dtype=str)
         else:
             df = pd.read_excel(file_path, dtype=str)
-        # Applique l'extraction du code couleur sur la colonne URL
+        # Applique l'extraction du code couleur (auto-detection si url_column=None)
         df = add_color_codes(df, url_column)
         # Sauvegarde le fichier avec la nouvelle colonne
         out_path = file_path.rsplit(".", 1)[0] + "_couleurs." + file_path.rsplit(".", 1)[1]

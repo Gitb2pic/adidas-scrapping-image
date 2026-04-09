@@ -90,23 +90,61 @@ def extract_color_code(url):
     return None
 
 
-def add_color_codes(df, url_column):
+def _detect_url_column(df):
+    """
+    Detecte automatiquement la colonne contenant des URLs dans un DataFrame.
+
+    Parcourt chaque colonne et compte le nombre de valeurs commencant par 'http'.
+    Retourne la colonne avec le plus de correspondances.
+
+    Args:
+        df: Le DataFrame pandas a analyser.
+
+    Returns:
+        Le nom de la colonne contenant le plus d'URLs, ou None si aucune trouvee.
+    """
+    best_col = None
+    best_count = 0
+    for col in df.columns:
+        # Compte les valeurs qui ressemblent a des URLs dans cette colonne
+        count = df[col].astype(str).str.startswith("http").sum()
+        if count > best_count:
+            best_count = count
+            best_col = col
+    if best_col:
+        print(f"  [AUTO] Colonne URL detectee : '{best_col}' ({best_count} URLs trouvees)")
+    return best_col
+
+
+def add_color_codes(df, url_column=None):
     """
     Ajoute une colonne 'Code_Couleur_Extrait' au DataFrame.
 
     Parcourt la colonne d'URLs et applique extract_color_code() sur chaque ligne.
     Les URLs sans code couleur detecte auront NaN dans la nouvelle colonne.
+    Si url_column est None, detecte automatiquement la colonne contenant des URLs.
 
     Args:
         df:         Le DataFrame pandas contenant les donnees produit.
         url_column: Le nom de la colonne contenant les URLs (str).
+                    Si None, detection automatique.
 
     Returns:
         Le DataFrame avec la nouvelle colonne 'Code_Couleur_Extrait' ajoutee.
 
     Raises:
         KeyError: Si la colonne url_column n'existe pas dans le DataFrame.
+        ValueError: Si aucune colonne contenant des URLs n'est detectee.
     """
+    # Si aucune colonne specifiee, detection automatique
+    if not url_column:
+        url_column = _detect_url_column(df)
+        if not url_column:
+            raise ValueError(
+                "Aucune colonne contenant des URLs detectee. "
+                "Specifiez le nom de la colonne avec --url-column."
+            )
+
     # Verifie que la colonne URL existe dans le DataFrame
     if url_column not in df.columns:
         raise KeyError(
