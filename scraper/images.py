@@ -148,6 +148,34 @@ def is_valid_image(url: str) -> bool:
     return False
 
 
+def _filter_by_sku(images, sku):
+    """
+    Filtre les images pour ne garder que celles dont l'URL contient le SKU.
+
+    Compare le SKU en minuscules et sans tirets/espaces pour un matching souple.
+    Si aucune image ne correspond, retourne la liste originale en fallback.
+
+    Args:
+        images: Liste de dicts [{"url": str, "label": str}, ...].
+        sku:    La reference produit a chercher dans les URLs.
+
+    Returns:
+        Liste filtree si des correspondances existent, sinon la liste originale.
+    """
+    # Normalise le SKU : minuscules + sans tirets/espaces pour matching souple
+    sku_lower = sku.lower()
+    sku_clean = sku_lower.replace("-", "").replace(" ", "").replace("_", "")
+    # Garde les images dont l'URL contient le SKU (avec ou sans tirets)
+    matched = []
+    for img in images:
+        url_lower = img["url"].lower()
+        url_clean = url_lower.replace("-", "").replace("_", "")
+        if sku_lower in url_lower or sku_clean in url_clean:
+            matched.append(img)
+    # Retourne les images filtrees si trouvees, sinon toutes les images
+    return matched if matched else images
+
+
 def extract_images(driver, sku):
     """
     Extrait toutes les images de produit depuis la page courante du navigateur.
@@ -158,10 +186,12 @@ def extract_images(driver, sku):
     3. Regex      : recherche brute des URLs d'images dans le code source HTML
 
     Chaque image trouvee est dedupliquee et validee avant d'etre ajoutee.
+    Apres extraction, filtre les images pour ne garder que celles dont
+    l'URL contient le SKU (si possible).
 
     Args:
         driver: L'instance Selenium Chrome avec la page chargee.
-        sku:    La reference produit (pour le logging).
+        sku:    La reference produit (pour le logging et le filtrage).
 
     Returns:
         Liste de dicts [{"url": str, "label": str}, ...] avec les images trouvees.
@@ -263,8 +293,9 @@ def extract_images(driver, sku):
         for url in (all_img_urls or []):
             add(url, "js_attr_scan")
 
-        # Si des images ont ete trouvees, on retourne directement
+        # Si des images ont ete trouvees, on filtre par SKU et retourne
         if images:
+            images = _filter_by_sku(images, sku)
             log(f"{len(images)} image(s) valide(s) extraite(s) du DOM", "OK", sku=sku)
             return images
     except Exception:
@@ -303,6 +334,7 @@ def extract_images(driver, sku):
                             add(val, "html_img")
 
         if images:
+            images = _filter_by_sku(images, sku)
             log(f"{len(images)} image(s) valide(s) extraite(s) du visuel HTML", "OK", sku=sku)
             return images
     except Exception:
@@ -327,6 +359,7 @@ def extract_images(driver, sku):
                 _walk_json(json.loads(raw), add)
                 # Si des images ont ete extraites, on retourne directement
                 if images:
+                    images = _filter_by_sku(images, sku)
                     log(f"{len(images)} image(s) extraite(s) des donnees cachees {var}", "OK", sku=sku)
                     return images
         except Exception:
@@ -352,8 +385,9 @@ def extract_images(driver, sku):
     for m in scene7_re.finditer(driver.page_source):
         add(m.group(0), "regex_scene7")
 
-    # Log du resultat de la recherche Regex
+    # Filtre par SKU avant de retourner
     if images:
+        images = _filter_by_sku(images, sku)
         log(f"{len(images)} image(s) valide(s) recuperee(s) par Regex", "OK", sku=sku)
     else:
         log("Aucune image valide trouvee sur cette page.", "WARN", sku=sku)
