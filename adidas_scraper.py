@@ -30,8 +30,9 @@ from pathlib import Path  # Manipulation de chemins de fichiers
 
 # Tente d'importer les fonctions principales du package scraper
 try:
-    # Importe les deux fonctions d'orchestration exposees par le package
+    # Importe les fonctions d'orchestration et d'extraction couleur du package
     from scraper import run_single, run_excel_batch
+    from scraper.colors import add_color_codes
 except ImportError:
     # Si l'import echoue, les dependances ne sont pas installees
     print("\n[X] Dependances manquantes. Lancer d'abord :\n")
@@ -57,7 +58,7 @@ def main():
         formatter_class=argparse.RawTextHelpFormatter,
     )
     # Groupe mutuellement exclusif : --sku OU --excel (pas les deux)
-    src = parser.add_mutually_exclusive_group(required=True)
+    src = parser.add_mutually_exclusive_group(required=False)
     # Option --sku : reference produit unique a traiter
     src.add_argument("--sku", help="Reference unique, ex: MH03AC-T03RED")
     # Option --excel : fichier Excel source avec les SKUs
@@ -105,9 +106,47 @@ def main():
     parser.add_argument("--headless", action="store_true", help="Executer en arriere-plan sans interface")
     # Option --dry-run : simulation sans telechargement
     parser.add_argument("--dry-run", action="store_true", help="Effectuer une simulation sans telecharger")
+    # Option --extract-colors : extraction du code couleur depuis les URLs d'un fichier Excel/CSV
+    parser.add_argument(
+        "--extract-colors",
+        nargs=2,
+        metavar=("FICHIER", "COLONNE_URL"),
+        help=(
+            "Extraire le code couleur depuis les URLs d'un fichier Excel/CSV :\n"
+            "  --extract-colors produits.xlsx 'URL Produit'\n"
+            "Ajoute une colonne 'Code_Couleur_Extrait' au fichier."
+        ),
+    )
 
     # Parse les arguments passes en ligne de commande
     args = parser.parse_args()
+
+    # ---- Mode extraction couleur (independant du scraping) ----
+    if args.extract_colors:
+        import pandas as pd
+        # Recupere le chemin du fichier et le nom de la colonne URL
+        file_path, url_column = args.extract_colors
+        # Detecte le format du fichier (Excel ou CSV)
+        if file_path.endswith(".csv"):
+            df = pd.read_csv(file_path, dtype=str)
+        else:
+            df = pd.read_excel(file_path, dtype=str)
+        # Applique l'extraction du code couleur sur la colonne URL
+        df = add_color_codes(df, url_column)
+        # Sauvegarde le fichier avec la nouvelle colonne
+        out_path = file_path.rsplit(".", 1)[0] + "_couleurs." + file_path.rsplit(".", 1)[1]
+        if out_path.endswith(".csv"):
+            df.to_csv(out_path, index=False)
+        else:
+            df.to_excel(out_path, index=False)
+        print(f"  Fichier sauvegarde : {out_path}")
+        print("  Operation terminee avec succes.\n")
+        return
+
+    # Verifie qu'au moins --sku ou --excel est fourni pour le scraping
+    if not args.sku and not args.excel:
+        parser.error("L'un des arguments --sku, --excel ou --extract-colors est requis.")
+
     # Active le mode RACE si --urls ou --sites est passe
     use_race = args.urls is not None or args.sites is not None
     # Recupere les URLs personnalisees (liste vide si --urls sans argument)

@@ -15,9 +15,11 @@ Modules :
     navigation   — Navigation sequentielle et mode RACE multi-URL
     download     — Telechargement des images sur le disque
     excel        — Export des resultats au format Excel Odoo 18
+    colors       — Extraction du code couleur depuis les URLs de produits
     orchestrator — Coordination de toutes les etapes du scraping
 """
 
 # Expose les fonctions principales au niveau du package
 # pour permettre : from scraper import run_single, run_excel_batch
 from .orchestrator import scrape_sku, run_single, run_excel_batch
+from .colors import extract_color_code, add_color_codes
