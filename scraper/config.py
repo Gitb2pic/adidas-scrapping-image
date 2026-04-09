@@ -16,12 +16,14 @@ Ce module centralise toutes les constantes utilisees par le scraper :
 # Le placeholder {sku} sera remplace par la reference du produit.
 # Le placeholder {brand} sera remplace par le nom de la marque (ou supprime si vide).
 DEFAULT_URLS = [
-    # Recherche Google Images pour trouver le produit sur n'importe quel site
-    "https://www.google.com/search?q={brand}+{sku}+product&udm=2",
-    # Recherche sur le site Mostly Heard Rarely Seen 8-Bit (Shopify)
-    "https://mostlyheardrarelyseen8bit.com/search?q={sku}",
-    # Recherche sur Farfetch (marketplace mode luxe)
-    "https://www.farfetch.com/be/search?q={sku}",
+    # # Recherche Google Images pour trouver le produit sur n'importe quel site
+    # "https://www.google.com/search?q={brand}+{sku}+product&udm=2",
+    # # Recherche sur le site Mostly Heard Rarely Seen 8-Bit (Shopify)
+    # "https://mostlyheardrarelyseen8bit.com/search?q={sku}",
+    # # Recherche sur Farfetch (marketplace mode luxe)
+    # "https://www.farfetch.com/be/search?q={sku}",
+
+    "https://www.hugoboss.com/search?q={sku}"
 ]
 
 # ================================================================

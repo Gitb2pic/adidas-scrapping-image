@@ -2,3 +2,6 @@
 /.env
 port.xlsx
 Product.xlsx
+/images_dl
+/scraper/__pycache__
+Product Variant img.xlsx
